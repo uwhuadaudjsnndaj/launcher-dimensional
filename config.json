@@ -1,0 +1,65 @@
+{
+  "studioName": "Dimensional Studio",
+  "tagline": "Eventos de Minecraft",
+  "discord": {
+    "clientId": "1553965034844069980",
+    "redirectUri": "http://localhost:53682/callback",
+    "requiredGuildId": "",
+    "inviteUrl": "https://discord.gg/rVGGTJhcx"
+  },
+  "ram": {
+    "min": "2G",
+    "max": "4G"
+  },
+  "javaPath": "",
+  "richPresence": {
+    "enabled": true,
+    "largeImageKey": "logo"
+  },
+  "servers": [
+    {
+      "id": "justsafio",
+      "name": "JustSafio",
+      "status": "available",
+      "description": "Servidor oficial de Dimensional Studio. Únete al evento y vive la experiencia.",
+      "ip": "play.tuservidor.com",
+      "port": 25565,
+      "autoJoin": true,
+      "minecraftVersion": "1.20.1",
+      "loader": {
+        "type": "forge",
+        "version": "47.3.0"
+      },
+      "modsManifestUrl": "",
+      "accent": [
+        "#d4141f",
+        "#6e0a12"
+      ]
+    },
+    {
+      "id": "proximamente-1",
+      "name": "Próximamente",
+      "status": "soon",
+      "description": "Un nuevo mundo se encuentra en desarrollo. Muy pronto más detalles.",
+      "accent": [
+        "#2b2a31",
+        "#4b4a55"
+      ]
+    },
+    {
+      "id": "proximamente-2",
+      "name": "Próximamente",
+      "status": "soon",
+      "description": "Otra experiencia de Dimensional Studio está en camino.",
+      "accent": [
+        "#2f2a30",
+        "#554b55"
+      ]
+    }
+  ],
+  "registry": {
+    "enabled": false,
+    "url": "",
+    "apiKey": ""
+  }
+}

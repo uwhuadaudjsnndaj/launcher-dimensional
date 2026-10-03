@@ -1,0 +1,94 @@
+# Dimensional Studio Launcher
+
+Launcher de Minecraft (modo offline / no premium) para **Dimensional Studio**, compañía de eventos de Minecraft.
+
+- Inicio de sesión con Discord; el perfil (foto, nombre y @usuario) aparece arriba a la izquierda
+- Elección de nombre de jugador (3–16 caracteres: letras, números y `_`)
+- Tres servidores: **JustSafio** (disponible) y dos **Próximamente**
+- Estado en vivo de cada servidor (en línea, jugadores, sin conexión)
+- Cada servidor tiene su propia instancia (mods, configs y mundos separados)
+- Descarga mods automáticamente desde un manifiesto; soporta Forge, Fabric o Vanilla
+- Discord Rich Presence: "En el launcher" / "Jugando JustSafio"
+- Pantalla de **Configuración**: memoria RAM, ruta de Java, conexión automática, pantalla completa, minimizar al jugar y actividad en Discord (se guarda sola en tu equipo)
+- Tema rojo y negro basado en el logo (`renderer/assets/logo.png`)
+
+## Ejecutar
+
+```
+npm install
+npm start
+```
+
+Instalador de Windows: `npm run dist` (crea el acceso directo en el escritorio y en el menú Inicio, con el logo de Dimensional Studio).
+
+## Discord
+
+En https://discord.com/developers/applications → tu aplicación → **OAuth2 → Redirects**
+agrega `http://localhost:53682/callback`.
+
+Para el logo del estado: **Rich Presence → Art Assets**, sube una imagen cuadrada (mín. 512×512)
+llamada `logo`.
+
+## Configurar servidores (`config.json`)
+
+Cada entrada de `servers`:
+
+| Campo | Qué es |
+|---|---|
+| `id` | Identificador único (nombre de su carpeta de instancia) |
+| `name` / `description` | Texto de la tarjeta |
+| `status` | `available` (se puede jugar) o `soon` (próximamente) |
+| `ip` / `port` | Dirección del servidor |
+| `minecraftVersion` | Ej. `1.20.1` |
+| `loader` | `{ "type": "forge" \| "fabric" \| "vanilla", "version": "47.3.0" }` |
+| `modsManifestUrl` | URL pública del manifiesto de mods (vacío = sin mods) |
+| `accent` | Dos colores para el degradado de la tarjeta |
+
+Para activar un servidor nuevo, cambia su `status` a `available` y rellena `ip`, `port`,
+`minecraftVersion` y `loader`. Mira `manifest.example.json` para el formato del manifiesto.
+
+Valores globales: `ram`, `javaPath` y `discord` (Client ID, invitación, `requiredGuildId` opcional).
+`ram` y `javaPath` son solo los valores iniciales: cada jugador los cambia desde **Configuración**.
+
+## Logo
+
+- `renderer/assets/logo.png` y `icon.png`: logo completo (ícono de la ventana)
+- `renderer/assets/logo-crop.png`: recorte que se muestra en el launcher
+- `build/icon.ico`: ícono del instalador de Windows
+
+Si tienes el logo en mayor resolución (512×512 o más), reemplaza esos archivos para que se vea más nítido.
+
+
+## Un jugador por IP
+
+El launcher consulta un **registro central** (`registry-server/`) que ve la IP pública de cada jugador.
+Una IP solo puede pertenecer a una cuenta de Discord: el jugador puede cambiar su nombre cuando quiera,
+pero otra cuenta no puede registrarse desde esa misma IP. Se verifica al iniciar sesión, al guardar el
+nombre y al darle a jugar. Si el registro no responde, el launcher no deja jugar.
+
+1. Sube la carpeta `registry-server/` a un VPS/hosting con Node 18+ y ejecuta:
+   `API_KEY=tu_clave PORT=8787 node server.js` (si va detrás de nginx/Cloudflare añade `TRUST_PROXY=1`).
+2. En `config.json` pon `registry.url` (y `registry.apiKey` con la misma clave).
+3. Los datos quedan en `registry-server/players.json` (haz copia de seguridad).
+
+Límites: IP compartida (hermanos, misma red, VPN) cuenta como una sola persona; quien cambie de IP
+o use VPN puede registrar otra cuenta. Es lo más que se puede lograr sin verificar cuentas premium.
+
+## Publicar e instalar desde GitHub (con actualizaciones automáticas)
+
+0. **Atajo:** haz doble clic en `PUBLICAR.bat` (ya apunta a tu repositorio) y hace todo lo de abajo solo.
+1. Crea un repositorio **público** en GitHub (ej. `dimensional-studio-launcher`) y en `package.json`
+   cambia `build.publish[0].owner` por tu usuario (y `repo` si usaste otro nombre).
+2. Sube el proyecto:
+   `git init && git add . && git commit -m "Launcher" && git branch -M main`
+   `git remote add origin https://github.com/TU_USUARIO/dimensional-studio-launcher.git && git push -u origin main`
+3. Publica la primera versión: `git tag v1.1.0 && git push origin v1.1.0`.
+   GitHub Actions construye el instalador y lo sube a **Releases**; ahí lo descarga la gente
+   (`Dimensional-Studio-Setup-1.1.0.exe`).
+4. Para una actualización: sube `version` en `package.json` (ej. `1.1.1`), haz commit y
+   `git tag v1.1.1 && git push origin main v1.1.1`. Los launchers instalados la descargan solos
+   (al abrir y cada hora), muestran el aviso "Reiniciar y actualizar" y también se instala al cerrar.
+
+Notas: el repositorio debe ser público para que el actualizador pueda leer los Releases. Como el instalador
+no está firmado, Windows SmartScreen mostrará "Windows protegió tu PC" la primera vez (Más información → Ejecutar
+de todas formas). La actualización solo funciona en la app instalada, no con `npm start`.
