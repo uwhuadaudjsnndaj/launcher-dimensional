@@ -12,6 +12,15 @@ Launcher de Minecraft (modo offline / no premium) para **Dimensional Studio**, c
 - Pantalla de **Configuración**: memoria RAM, ruta de Java, conexión automática, pantalla completa, minimizar al jugar y actividad en Discord (se guarda sola en tu equipo)
 - Tema rojo y negro basado en el logo (`renderer/assets/logo.png`)
 
+## Novedades 1.2.0
+
+- **Tiempo jugado** por servidor (se muestra en cada tarjeta y se guarda por cuenta de Discord)
+- **Si Minecraft se cierra con error**: aviso con diagnóstico, botón *Copiar registro* y *Abrir crash report*
+- **Configuración avanzada**: argumentos JVM, resolución de ventana, RAM recomendada según tu equipo y aviso si asignas demasiada
+- **Skin**: guarda el nombre de una cuenta de Minecraft y copia el comando `/skin set` para SkinsRestorer
+- **Tutorial** la primera vez que se abre (se puede repetir desde Configuración)
+- Corrección: la conexión automática al servidor ahora usa `quickPlay` (antes se enviaba como argumento de Java)
+
 ## Ejecutar
 
 ```
@@ -82,9 +91,9 @@ o use VPN puede registrar otra cuenta. Es lo más que se puede lograr sin verifi
 2. Sube el proyecto:
    `git init && git add . && git commit -m "Launcher" && git branch -M main`
    `git remote add origin https://github.com/TU_USUARIO/dimensional-studio-launcher.git && git push -u origin main`
-3. Publica la primera versión: `git tag v1.1.0 && git push origin v1.1.0`.
+3. Publica la primera versión: `git tag v1.2.0 && git push origin v1.2.0`.
    GitHub Actions construye el instalador y lo sube a **Releases**; ahí lo descarga la gente
-   (`Dimensional-Studio-Setup-1.1.0.exe`).
+   (`Dimensional-Studio-Setup-1.2.0.exe`).
 4. Para una actualización: sube `version` en `package.json` (ej. `1.1.1`), haz commit y
    `git tag v1.1.1 && git push origin main v1.1.1`. Los launchers instalados la descargan solos
    (al abrir y cada hora), muestran el aviso "Reiniciar y actualizar" y también se instala al cerrar.

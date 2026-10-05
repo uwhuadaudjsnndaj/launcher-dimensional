@@ -1,7 +1,7 @@
 {
   "name": "dimensional-studio-launcher",
   "productName": "Dimensional Studio",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Launcher oficial de Dimensional Studio",
   "main": "main.js",
   "scripts": {
@@ -43,16 +43,20 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "Dimensional Studio",
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "language": "3082"
     },
     "copyright": "© Dimensional Studio",
     "linux": {

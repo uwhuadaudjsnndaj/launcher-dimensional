@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, clipboard } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -50,7 +50,10 @@ const DEFAULT_SETTINGS = {
   autoJoin: true,
   fullscreen: false,
   minimizeOnPlay: true,
-  richPresence: !(cfg.richPresence && cfg.richPresence.enabled === false)
+  richPresence: !(cfg.richPresence && cfg.richPresence.enabled === false),
+  jvmArgs: '',
+  winWidth: 0, // 0 = automático
+  winHeight: 0
 };
 
 function sanitizeSettings(input) {
@@ -61,6 +64,25 @@ function sanitizeSettings(input) {
     out.ramMax = n;
   }
   if ('javaPath' in input) out.javaPath = String(input.javaPath || '').trim();
+  if ('jvmArgs' in input) {
+    const raw = String(input.jvmArgs || '').trim();
+    const tokens = raw ? raw.split(/\s+/) : [];
+    for (const t of tokens) {
+      if (!t.startsWith('-')) throw new Error(`Argumento no válido: "${t}". Cada argumento debe empezar con "-".`);
+      if (/^-Xm[sx]/i.test(t)) throw new Error('La memoria se cambia con el control de Memoria RAM, no aquí.');
+      if (/^-javaagent/i.test(t)) throw new Error('No se permiten agentes Java.');
+    }
+    out.jvmArgs = tokens.join(' ');
+  }
+  ['winWidth', 'winHeight'].forEach((k) => {
+    if (k in input) {
+      const n = Math.round(Number(input[k]) || 0);
+      if (n !== 0 && (n < 640 || n > 7680)) {
+        throw new Error('La resolución debe estar entre 640 y 7680 (o vacío para automática).');
+      }
+      out[k] = n;
+    }
+  });
   ['autoJoin', 'fullscreen', 'minimizeOnPlay', 'richPresence'].forEach((k) => {
     if (k in input) out[k] = !!input[k];
   });
@@ -183,11 +205,14 @@ function disconnectPresence() {
 // Estado persistente (usuario de Discord + nombre elegido por cuenta)
 // ---------------------------------------------------------------------------
 function loadState() {
+  let saved = {};
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    saved = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) || {};
   } catch {
-    return { user: null, usernames: {} };
+    saved = {};
   }
+  // playtime: { [discordId]: { [serverId]: milisegundos } } · skins: { [discordId]: nombre }
+  return { user: null, usernames: {}, playtime: {}, skins: {}, tourDone: false, ...saved };
 }
 
 function saveState(state) {
@@ -579,6 +604,60 @@ async function prepareLoader(server) {
 // ---------------------------------------------------------------------------
 // Lanzar el juego (modo offline / no premium)
 // ---------------------------------------------------------------------------
+let lastCrash = null; // { report, log } del último cierre con error
+
+function addPlaytime(userId, serverId, ms) {
+  if (!userId || !(ms > 0)) return;
+  const state = loadState();
+  state.playtime[userId] = state.playtime[userId] || {};
+  state.playtime[userId][serverId] = (state.playtime[userId][serverId] || 0) + ms;
+  saveState(state);
+  if (state.user && state.user.id === userId) send('playtime', state.playtime[userId]);
+}
+
+function diagnose(text) {
+  if (/OutOfMemoryError|Could not reserve enough space|Too small maximum heap/i.test(text)) {
+    return 'Minecraft se quedó sin memoria o no pudo reservarla. Ajusta la Memoria RAM en Configuración.';
+  }
+  if (/UnsupportedClassVersionError|class file version/i.test(text)) {
+    return 'La versión de Java no es la correcta. Este servidor necesita Java 17.';
+  }
+  if (/Mod Loading has failed|Missing or unsupported mandatory dependencies|Failed to load mod/i.test(text)) {
+    return 'Hay un problema con los mods. Vuelve a intentarlo; si sigue igual, copia el registro y envíaselo al staff.';
+  }
+  return null;
+}
+
+async function reportCrash(server, code, gameDir, startedAt, tail, version) {
+  let report = null;
+  let reportText = '';
+  try {
+    const dir = path.join(gameDir, 'crash-reports');
+    let best = 0;
+    for (const f of await fsp.readdir(dir)) {
+      if (!f.endsWith('.txt')) continue;
+      const st = await fsp.stat(path.join(dir, f));
+      if (st.mtimeMs >= startedAt - 5000 && st.mtimeMs > best) {
+        best = st.mtimeMs;
+        report = path.join(dir, f);
+      }
+    }
+    if (report) reportText = (await fsp.readFile(report, 'utf8')).slice(0, 30000);
+  } catch {}
+  const header = `${cfg.studioName} v${version} · ${server.name} · MC ${server.minecraftVersion} · código de salida ${code}`;
+  lastCrash = { report, log: [header, ...tail].join('\n') };
+  send('game-crash', {
+    serverName: server.name,
+    code,
+    hasReport: !!report,
+    hint: diagnose(reportText + '\n' + tail.join('\n'))
+  });
+}
+
+function jvmArgsList() {
+  return settings.jvmArgs ? settings.jvmArgs.split(/\s+/).filter(Boolean) : [];
+}
+
 function javaWorks(bin) {
   const r = spawnSync(bin || 'java', ['-version']);
   return !r.error;
@@ -588,14 +667,12 @@ function javaOk() {
   return javaWorks(settings.javaPath);
 }
 
-function joinArgs(server) {
-  if (!settings.autoJoin || server.autoJoin === false) return [];
+function quickPlayOpts(server) {
+  if (!settings.autoJoin || server.autoJoin === false || !server.ip) return null;
   const minor = parseInt(String(server.minecraftVersion).split('.')[1], 10) || 0;
   const port = server.port || 25565;
-  if (minor >= 20) {
-    return ['--quickPlayMultiplayer', `${server.ip}:${port}`];
-  }
-  return ['--server', server.ip, '--port', String(port)];
+  // 1.20+ usa quickPlay; versiones anteriores usan --server/--port (lo resuelve minecraft-launcher-core)
+  return { type: minor >= 20 ? 'multiplayer' : 'legacy', identifier: `${server.ip}:${port}` };
 }
 
 async function play(serverId) {
@@ -617,6 +694,10 @@ async function play(serverId) {
   send('play-state', { playing: true, serverId: server.id });
   const debugTail = [];
   const gameDir = instanceDir(server.id);
+  const userId = state.user.id;
+  const logBuf = [];
+  let startedAt = 0;
+  lastCrash = null;
 
   try {
     await fsp.mkdir(gameDir, { recursive: true });
@@ -639,28 +720,43 @@ async function play(serverId) {
       version,
       memory: { min: `${Math.min(2, settings.ramMax)}G`, max: `${settings.ramMax}G` },
       overrides: { gameDirectory: gameDir },
-      customArgs: joinArgs(server),
+      customArgs: jvmArgsList(),
       ...extra
     };
     if (settings.javaPath) opts.javaPath = settings.javaPath;
     if (settings.fullscreen) opts.window = { fullscreen: true };
+    else if (settings.winWidth > 0 && settings.winHeight > 0) {
+      opts.window = { width: String(settings.winWidth), height: String(settings.winHeight) };
+    }
+    const qp = quickPlayOpts(server);
+    if (qp) opts.quickPlay = qp;
 
     launcher.on('progress', (e) => {
       const pct = e.total ? Math.round((e.task / e.total) * 100) : null;
       progress(`Descargando ${e.type}…`, pct);
     });
     launcher.on('package-extract', () => progress('Extrayendo archivos…'));
+    const pushLog = (line) => {
+      const text = String(line);
+      logBuf.push(text);
+      if (logBuf.length > 300) logBuf.shift();
+      send('log', text);
+    };
     launcher.on('debug', (line) => {
       debugTail.push(String(line));
       if (debugTail.length > 30) debugTail.shift();
-      send('log', String(line));
+      pushLog(line);
     });
-    launcher.on('data', (line) => send('log', String(line)));
+    launcher.on('data', pushLog);
     launcher.on('close', (code) => {
       playingServerId = null;
       setPresence('menu');
+      if (startedAt) addPlaytime(userId, server.id, Date.now() - startedAt);
       send('play-state', { playing: false, serverId: server.id });
       progress(code === 0 ? 'Juego cerrado' : `El juego se cerró (código ${code})`, null);
+      if (code !== 0 && startedAt) {
+        reportCrash(server, code, gameDir, startedAt, logBuf.slice(-200), app.getVersion()).catch(() => {});
+      }
     });
 
     progress('Iniciando Minecraft…');
@@ -668,6 +764,7 @@ async function play(serverId) {
     if (!proc) {
       throw new Error('No se pudo iniciar Minecraft.\n' + debugTail.slice(-5).join('\n'));
     }
+    startedAt = Date.now();
     setPresence('playing', server);
     progress(`Minecraft iniciado. Entrando a ${server.name}…`, null);
     if (settings.minimizeOnPlay && mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
@@ -742,7 +839,10 @@ ipcMain.handle('app:get-state', () => {
     },
     user: state.user,
     username,
-    playingServerId
+    playingServerId,
+    playtime: state.user ? state.playtime[state.user.id] || {} : {},
+    skin: state.user ? state.skins[state.user.id] || '' : '',
+    tourDone: !!state.tourDone
   };
 });
 
@@ -766,7 +866,12 @@ ipcMain.handle(
     if (state.usernames[user.id]) await registryClaim(user.id, state.usernames[user.id]);
     state.user = user;
     saveState(state);
-    return { user, username: state.usernames[user.id] || null };
+    return {
+      user,
+      username: state.usernames[user.id] || null,
+      playtime: state.playtime[user.id] || {},
+      skin: state.skins[user.id] || ''
+    };
   })
 );
 
@@ -811,11 +916,15 @@ ipcMain.handle('app:open-invite', async () => {
   }
 });
 
-const settingsPayload = () => ({
-  settings,
-  defaults: DEFAULT_SETTINGS,
-  systemRamGb: Math.max(2, Math.floor(os.totalmem() / 1024 ** 3))
-});
+const settingsPayload = () => {
+  const systemRamGb = Math.max(2, Math.floor(os.totalmem() / 1024 ** 3));
+  return {
+    settings,
+    defaults: DEFAULT_SETTINGS,
+    systemRamGb,
+    recommendedRamGb: Math.max(2, Math.min(6, Math.floor(systemRamGb / 2)))
+  };
+};
 
 ipcMain.handle('settings:get', () => settingsPayload());
 
@@ -858,6 +967,46 @@ ipcMain.handle('settings:pick-java', async () => {
     filters: process.platform === 'win32' ? [{ name: 'Java', extensions: ['exe'] }] : []
   });
   return { path: res.canceled || !res.filePaths.length ? null : res.filePaths[0] };
+});
+
+ipcMain.handle('crash:copy-log', () => {
+  if (!lastCrash) return { ok: false };
+  clipboard.writeText(lastCrash.log);
+  return { ok: true };
+});
+
+ipcMain.handle('crash:open-report', async () => {
+  if (!lastCrash || !lastCrash.report) return { ok: false };
+  const err = await shell.openPath(lastCrash.report);
+  return { ok: !err };
+});
+
+ipcMain.handle('app:copy-text', (_e, text) => {
+  clipboard.writeText(String(text || '').slice(0, 200));
+  return { ok: true };
+});
+
+ipcMain.handle(
+  'skin:set',
+  wrap(async (_e, name) => {
+    const clean = String(name || '').trim();
+    if (clean && !USERNAME_RE.test(clean)) {
+      throw new Error('El nombre de la skin debe tener de 3 a 16 caracteres: letras, números o guion bajo (_)');
+    }
+    const state = loadState();
+    if (!state.user) throw new Error('Primero inicia sesión con Discord');
+    if (clean) state.skins[state.user.id] = clean;
+    else delete state.skins[state.user.id];
+    saveState(state);
+    return { skin: clean };
+  })
+);
+
+ipcMain.handle('tour:done', () => {
+  const state = loadState();
+  state.tourDone = true;
+  saveState(state);
+  return { ok: true };
 });
 
 ipcMain.on('win:minimize', () => {

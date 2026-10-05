@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('api', {
   close: () => ipcRenderer.send('win:close'),
   onProgress: (cb) => ipcRenderer.on('progress', (_e, data) => cb(data)),
   onLog: (cb) => ipcRenderer.on('log', (_e, line) => cb(line)),
+  copyCrashLog: () => ipcRenderer.invoke('crash:copy-log'),
+  openCrashReport: () => ipcRenderer.invoke('crash:open-report'),
+  copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
+  setSkin: (name) => ipcRenderer.invoke('skin:set', name),
+  tourDone: () => ipcRenderer.invoke('tour:done'),
+  onCrash: (cb) => ipcRenderer.on('game-crash', (_e, data) => cb(data)),
+  onPlaytime: (cb) => ipcRenderer.on('playtime', (_e, data) => cb(data)),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   onUpdate: (cb) => ipcRenderer.on('update-state', (_e, data) => cb(data)),
   onPlayState: (cb) => ipcRenderer.on('play-state', (_e, data) => cb(data))
