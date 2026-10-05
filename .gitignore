@@ -1,0 +1,5 @@
+node_modules/
+dist/
+registry-server/players.json
+*.log
+private.json

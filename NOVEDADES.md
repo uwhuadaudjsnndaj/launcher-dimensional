@@ -1,0 +1,6 @@
+- Cuando el launcher se actualiza, ahora te muestra aquí qué ha cambiado.
+- Si una actualización falla, verás el motivo y un botón para reintentarla.
+- Cada servidor indica si está instalado, si tiene una actualización o si se está preparando.
+- Avisos de Windows cuando el launcher está minimizado: actualización lista, servidor preparado y Minecraft cerrado con error. Se pueden desactivar en Configuración.
+- Insignia de tu rol de Discord (Owner, Developer, VIP…) junto a tu perfil. Cierra sesión y vuelve a entrar una vez para que aparezca.
+- El staff recibe un aviso en Discord cuando alguien entra a un servidor.

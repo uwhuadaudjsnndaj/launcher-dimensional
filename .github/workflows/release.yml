@@ -1,0 +1,39 @@
+name: Publicar versión
+# Al subir una etiqueta (v1.1.1, v1.2.0…) construye el instalador de Windows
+# y lo publica en GitHub Releases; los launchers instalados se actualizan solos.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      # El webhook del registro de Discord no está en el repositorio: se guarda como secreto
+      # DISCORD_WEBHOOK_URL (Settings > Secrets and variables > Actions) y se inyecta al construir.
+      - name: Webhook del registro
+        shell: bash
+        env:
+          LOG_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -n "$LOG_WEBHOOK" ]; then
+            node -e "require('fs').writeFileSync('private.json', JSON.stringify({ logWebhookUrl: process.env.LOG_WEBHOOK }))"
+          fi
+      - run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # El texto de NOVEDADES.md se publica como descripción de la Release y es lo que el launcher
+      # muestra a los jugadores tras actualizar.
+      - name: Novedades en la Release
+        shell: bash
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f NOVEDADES.md ]; then gh release edit "$GITHUB_REF_NAME" --notes-file NOVEDADES.md; fi

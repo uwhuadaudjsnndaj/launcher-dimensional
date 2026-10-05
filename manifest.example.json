@@ -1,0 +1,16 @@
+{
+  "removeUnlisted": true,
+  "mods": [
+    {
+      "name": "mod-ejemplo.jar",
+      "url": "https://tuservidor.com/mods/mod-ejemplo.jar",
+      "sha1": ""
+    }
+  ],
+  "files": [
+    {
+      "path": "config/ejemplo.toml",
+      "url": "https://tuservidor.com/config/ejemplo.toml"
+    }
+  ]
+}
