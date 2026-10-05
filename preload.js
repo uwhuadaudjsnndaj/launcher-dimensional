@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('api', {
   cancelLogin: () => ipcRenderer.invoke('auth:cancel'),
   setUsername: (name) => ipcRenderer.invoke('profile:set-username', name),
   play: (serverId) => ipcRenderer.invoke('game:play', serverId),
+  openGameFolder: () => ipcRenderer.invoke('game:open-folder'),
+  repairInstall: () => ipcRenderer.invoke('game:repair'),
   openInvite: () => ipcRenderer.invoke('app:open-invite'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (partial) => ipcRenderer.invoke('settings:save', partial),

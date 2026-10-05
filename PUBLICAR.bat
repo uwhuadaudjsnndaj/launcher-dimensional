@@ -28,6 +28,14 @@ git branch -M main
 git remote remove origin >nul 2>nul
 git remote add origin https://github.com/uwhuadaudjsnndaj/launcher-dimensional.git
 
+rem Si GitHub ya tiene versiones anteriores, se continua sobre ese historial (sin borrar nada)
+git fetch origin >nul 2>nul
+git rev-parse --verify origin/main >nul 2>nul
+if not errorlevel 1 (
+  git merge-base --is-ancestor origin/main HEAD >nul 2>nul
+  if errorlevel 1 git reset --soft origin/main
+)
+
 git add .
 git commit -m "Version %VER%"
 git push -u origin main

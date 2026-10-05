@@ -28,6 +28,22 @@ try {
   privateCfg = {};
 }
 
+// Una sola ventana del launcher: evita puertos de login ocupados y juegos duplicados
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
+process.on('unhandledRejection', (err) => console.error('unhandledRejection:', err));
+process.on('uncaughtException', (err) => console.error('uncaughtException:', err));
+
 // Necesario en Windows para que las notificaciones nativas muestren el nombre y el icono del launcher
 if (process.platform === 'win32') {
   app.setAppUserModelId((pkg.build && pkg.build.appId) || 'com.dimensionalstudio.launcher');
@@ -435,13 +451,24 @@ function offlineUUID(name) {
   ].join('-');
 }
 
-async function download(url, dest) {
+async function download(url, dest, attempts = 3) {
   await fsp.mkdir(path.dirname(dest), { recursive: true });
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Descarga fallida (${res.status}): ${url}`);
   const tmp = dest + '.part';
-  await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(tmp));
-  await fsp.rename(tmp, dest);
+  let lastErr = null;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60 * 1000) });
+      if (!res.ok) throw new Error(`Descarga fallida (${res.status}): ${url}`);
+      await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(tmp));
+      await fsp.rename(tmp, dest);
+      return;
+    } catch (err) {
+      lastErr = err;
+      try { await fsp.unlink(tmp); } catch {}
+      if (i < attempts) await new Promise((r) => setTimeout(r, 1500 * i));
+    }
+  }
+  throw new Error(`No se pudo descargar un archivo necesario. Revisa tu conexión a internet. (${lastErr && lastErr.message})`);
 }
 
 function sha1File(file) {
@@ -711,12 +738,24 @@ async function discordLogin() {
 // ---------------------------------------------------------------------------
 // Sincronización de mods / archivos desde el manifiesto del servidor
 // ---------------------------------------------------------------------------
+// Ejecuta tareas con un máximo de `limit` a la vez
+async function runPool(items, limit, worker) {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      await worker(items[i], i);
+    }
+  });
+  await Promise.all(runners);
+}
+
 async function syncMods(server) {
   if (!server.modsManifestUrl) return null;
   const instance = instanceDir(server.id);
 
   progress('Buscando actualizaciones de mods…');
-  const res = await fetch(server.modsManifestUrl, { cache: 'no-store' });
+  const res = await fetch(server.modsManifestUrl, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
   if (!res.ok) throw new Error(`No se pudo leer el manifiesto de mods (${res.status})`);
   const manifest = await res.json();
 
@@ -724,18 +763,22 @@ async function syncMods(server) {
   await fsp.mkdir(modsDir, { recursive: true });
 
   const mods = Array.isArray(manifest.mods) ? manifest.mods : [];
-  const wanted = new Set();
+  const files = (Array.isArray(manifest.files) ? manifest.files : []).filter((f) => {
+    const dest = path.resolve(instance, f.path);
+    return dest.startsWith(path.resolve(instance) + path.sep); // evita rutas fuera de la instancia
+  });
+  const wanted = new Set(mods.map((m) => path.basename(m.name)));
+  const jobs = [
+    ...mods.map((m) => ({ label: path.basename(m.name), url: m.url, sha1: m.sha1, dest: path.join(modsDir, path.basename(m.name)) })),
+    ...files.map((f) => ({ label: f.path, url: f.url, sha1: f.sha1, dest: path.resolve(instance, f.path) }))
+  ];
 
-  for (let i = 0; i < mods.length; i++) {
-    const mod = mods[i];
-    const fileName = path.basename(mod.name);
-    wanted.add(fileName);
-    const dest = path.join(modsDir, fileName);
-    progress(`Mods: ${fileName} (${i + 1}/${mods.length})`, Math.round((i / mods.length) * 100));
-    if (await needsDownload(dest, mod.sha1)) {
-      await download(mod.url, dest);
-    }
-  }
+  let done = 0;
+  await runPool(jobs, 4, async (job) => {
+    if (await needsDownload(job.dest, job.sha1)) await download(job.url, job.dest);
+    done += 1;
+    progress(`Mods y archivos (${done}/${jobs.length}): ${job.label}`, Math.round((done / jobs.length) * 100));
+  });
 
   if (manifest.removeUnlisted !== false) {
     for (const f of await fsp.readdir(modsDir)) {
@@ -744,19 +787,37 @@ async function syncMods(server) {
       }
     }
   }
-
-  // Archivos extra (configs, resourcepacks, etc.) relativos a la carpeta de la instancia
-  const files = Array.isArray(manifest.files) ? manifest.files : [];
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    const dest = path.resolve(instance, f.path);
-    if (!dest.startsWith(path.resolve(instance) + path.sep)) continue; // evita rutas fuera de la instancia
-    progress(`Archivos: ${f.path} (${i + 1}/${files.length})`, Math.round((i / files.length) * 100));
-    if (await needsDownload(dest, f.sha1)) {
-      await download(f.url, dest);
-    }
-  }
   return manifestSignature(manifest);
+}
+
+// Si no hay internet pero el servidor ya estaba instalado, se juega con lo que hay en vez de bloquear al jugador
+async function syncModsSafe(server) {
+  try {
+    return await syncMods(server);
+  } catch (err) {
+    const marker = await readMarker(server);
+    if (marker && marker.loaderKey === loaderKey(server)) {
+      progress('Sin conexión con el servidor de mods: se usará la versión ya instalada.');
+      send('log', `Sincronización omitida: ${err.message}`);
+      return marker.manifestSig;
+    }
+    throw err;
+  }
+}
+
+// Primera vez: trae tus ajustes (controles, gráficos) y la lista de servidores desde el .minecraft de siempre
+async function importFromMinecraft(gameDir) {
+  try {
+    const base = process.platform === 'win32' ? path.join(app.getPath('appData'), '.minecraft') : path.join(os.homedir(), '.minecraft');
+    for (const f of ['options.txt', 'servers.dat']) {
+      const dest = path.join(gameDir, f);
+      if (!(await exists(dest)) && (await exists(path.join(base, f)))) {
+        await fsp.copyFile(path.join(base, f), dest);
+      }
+    }
+  } catch {
+    /* es solo una comodidad: nunca debe impedir jugar */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -864,13 +925,69 @@ function jvmArgsList() {
   return settings.jvmArgs ? settings.jvmArgs.split(/\s+/).filter(Boolean) : [];
 }
 
-function javaWorks(bin) {
-  const r = spawnSync(bin || 'java', ['-version']);
-  return !r.error;
+// Devuelve la versión mayor de Java (8, 17, 21…) o 0 si no se pudo ejecutar
+function javaMajor(bin) {
+  const r = spawnSync(bin || 'java', ['-version'], { encoding: 'utf8', timeout: 8000, windowsHide: true });
+  if (r.error) return 0;
+  const m = String(r.stderr || r.stdout || '').match(/version "(\d+)(?:\.(\d+))?/);
+  if (!m) return 0;
+  const major = Number(m[1]);
+  return major === 1 ? Number(m[2]) || 0 : major;
 }
 
-function javaOk() {
-  return javaWorks(settings.javaPath);
+function javaWorks(bin) {
+  return javaMajor(bin) > 0;
+}
+
+const MIN_JAVA = 17;
+const RUNTIME_DIR = path.join(ROOT, 'runtime', 'java17');
+
+function managedJavaPath() {
+  try {
+    for (const d of fs.readdirSync(RUNTIME_DIR)) {
+      const bin = path.join(RUNTIME_DIR, d, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+      if (fs.existsSync(bin)) return bin;
+    }
+  } catch {}
+  return null;
+}
+
+// Descarga Java 17 (Temurin) una sola vez para que el jugador no tenga que instalar nada
+async function installManagedJava() {
+  if (process.platform !== 'win32') {
+    throw new Error('No se encontró Java 17. Instálalo desde adoptium.net y vuelve a intentarlo.');
+  }
+  const zip = path.join(ROOT, 'runtime', 'java17.zip');
+  progress('Descargando Java 17 (solo la primera vez)…');
+  await download('https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse', zip);
+  progress('Instalando Java 17…');
+  await fsp.rm(RUNTIME_DIR, { recursive: true, force: true });
+  await fsp.mkdir(RUNTIME_DIR, { recursive: true });
+  const r = spawnSync('tar', ['-xf', zip, '-C', RUNTIME_DIR], { windowsHide: true, timeout: 5 * 60 * 1000 });
+  await fsp.unlink(zip).catch(() => {});
+  const bin = managedJavaPath();
+  if (r.error || !bin || javaMajor(bin) < MIN_JAVA) {
+    await fsp.rm(RUNTIME_DIR, { recursive: true, force: true }).catch(() => {});
+    throw new Error('No se pudo instalar Java automáticamente. Instala Java 17 (Temurin) desde adoptium.net.');
+  }
+  return bin;
+}
+
+// Orden: ruta elegida por el jugador → Java del sistema (17+) → Java propio del launcher → descargarlo
+async function resolveJava() {
+  if (settings.javaPath) {
+    const v = javaMajor(settings.javaPath);
+    if (v >= MIN_JAVA) return settings.javaPath;
+    throw new Error(
+      v
+        ? `El Java que elegiste es la versión ${v}. Este servidor necesita Java ${MIN_JAVA} o superior (o deja la ruta vacía para que el launcher lo gestione).`
+        : 'No se pudo ejecutar el Java que elegiste en Configuración. Déjalo vacío para usar la detección automática.'
+    );
+  }
+  if (javaMajor('java') >= MIN_JAVA) return 'java';
+  const managed = managedJavaPath();
+  if (managed && javaMajor(managed) >= MIN_JAVA) return managed;
+  return installManagedJava();
 }
 
 function quickPlayOpts(server) {
@@ -892,9 +1009,6 @@ async function play(serverId) {
   const username = state.usernames && state.usernames[state.user.id];
   if (!username || !USERNAME_RE.test(username)) throw new Error('Primero elige tu nombre de jugador');
   await registryClaim(state.user.id, username); // un jugador por IP, también al jugar
-  if (!javaOk()) {
-    throw new Error('No se encontró Java. Instala Java 17 (Temurin) y vuelve a intentarlo.');
-  }
 
   playingServerId = server.id;
   send('play-state', { playing: true, serverId: server.id, phase: 'preparing' });
@@ -907,7 +1021,9 @@ async function play(serverId) {
 
   try {
     await fsp.mkdir(gameDir, { recursive: true });
-    const manifestSig = await syncMods(server);
+    const javaBin = await resolveJava();
+    await importFromMinecraft(gameDir);
+    const manifestSig = await syncModsSafe(server);
     const { version, extra } = await prepareLoader(server);
     await writeMarker(server, manifestSig); // a partir de aquí el servidor cuenta como instalado
     send('play-state', { playing: true, serverId: server.id, phase: 'launching' });
@@ -932,7 +1048,7 @@ async function play(serverId) {
       customArgs: jvmArgsList(),
       ...extra
     };
-    if (settings.javaPath) opts.javaPath = settings.javaPath;
+    if (javaBin && javaBin !== 'java') opts.javaPath = javaBin;
     if (settings.fullscreen) opts.window = { fullscreen: true };
     else if (settings.winWidth > 0 && settings.winHeight > 0) {
       opts.window = { width: String(settings.winWidth), height: String(settings.winHeight) };
@@ -942,7 +1058,8 @@ async function play(serverId) {
 
     launcher.on('progress', (e) => {
       const pct = e.total ? Math.round((e.task / e.total) * 100) : null;
-      progress(`Descargando ${e.type}…`, pct);
+      const names = { assets: 'recursos', 'assets-copy': 'recursos', classes: 'librerías', natives: 'librerías nativas', forge: 'Forge' };
+      progress(`Descargando ${names[e.type] || e.type}…`, pct);
     });
     launcher.on('package-extract', () => progress('Extrayendo archivos…'));
     const pushLog = (line) => {
@@ -976,6 +1093,7 @@ async function play(serverId) {
     startedAt = Date.now();
     setPresence('playing', server);
     logJoin(state.user, username, server);
+    send('play-state', { playing: true, serverId: server.id, phase: 'playing' });
     progress(`Minecraft iniciado. Entrando a ${server.name}…`, null);
     if (settings.minimizeOnPlay && mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
   } catch (err) {
@@ -1029,8 +1147,6 @@ const publicServer = (s) => ({
   name: s.name,
   status: s.status,
   description: s.description || '',
-  ip: s.ip || null,
-  port: s.port || 25565,
   minecraftVersion: s.minecraftVersion || null,
   loader: (s.loader && s.loader.type) || null,
   accent: Array.isArray(s.accent) ? s.accent : null
@@ -1150,6 +1266,25 @@ ipcMain.handle(
 
 ipcMain.handle('game:play', wrap(async (_e, serverId) => { await play(serverId); return {}; }));
 
+ipcMain.handle('game:open-folder', async () => {
+  await fsp.mkdir(ROOT, { recursive: true });
+  await shell.openPath(ROOT);
+  return { ok: true };
+});
+
+// Borra mods y marcador de instalación: el próximo "Jugar" los descarga limpios (no toca mundos ni ajustes)
+ipcMain.handle(
+  'game:repair',
+  wrap(async () => {
+    if (playingServerId) throw new Error('Cierra Minecraft antes de reparar la instalación.');
+    for (const s of SERVERS.filter((x) => x.status === 'available')) {
+      await fsp.rm(path.join(instanceDir(s.id), 'mods'), { recursive: true, force: true });
+      await fsp.rm(path.join(instanceDir(s.id), INSTALL_MARKER), { force: true });
+    }
+    return {};
+  })
+);
+
 ipcMain.handle('app:open-invite', async () => {
   const url = cfg.discord && cfg.discord.inviteUrl;
   if (url && /^https:\/\/(discord\.gg|discord\.com)\//.test(url)) {
@@ -1173,8 +1308,10 @@ ipcMain.handle(
   'settings:save',
   wrap(async (_e, partial) => {
     const clean = sanitizeSettings(partial || {});
-    if (clean.javaPath && !javaWorks(clean.javaPath)) {
-      throw new Error('No se pudo ejecutar Java en esa ruta. Elige el archivo java.exe correcto.');
+    if (clean.javaPath) {
+      const v = javaMajor(clean.javaPath);
+      if (!v) throw new Error('No se pudo ejecutar Java en esa ruta. Elige el archivo java.exe correcto.');
+      if (v < MIN_JAVA) throw new Error(`Ese Java es la versión ${v}. Se necesita Java ${MIN_JAVA} o superior.`);
     }
     const wasRpc = settings.richPresence;
     settings = { ...settings, ...clean };

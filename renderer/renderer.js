@@ -127,14 +127,16 @@ function renderServers() {
 
     const meta = el('dl', 'meta');
     let ptEl = null;
+    let cardPlayers = null;
     if (soon) {
       meta.append(metaItem('Versión', 'Por anunciar'), metaItem('Estado', 'En desarrollo'));
     } else {
       const loader = LOADER_NAMES[server.loader] || '';
       meta.append(
         metaItem('Versión', [server.minecraftVersion, loader].filter(Boolean).join(' · ')),
-        metaItem('Dirección', server.port === 25565 ? server.ip : `${server.ip}:${server.port}`)
+        metaItem('Jugadores', 'Comprobando…')
       );
+      cardPlayers = meta.lastChild.querySelector('dd');
       const pt = metaItem('Tiempo jugado', fmtPlaytime((current.playtime || {})[server.id]));
       pt.classList.add('wide');
       ptEl = pt.querySelector('dd');
@@ -150,7 +152,7 @@ function renderServers() {
 
     card.append(banner, body, action);
     grid.append(card);
-    cards[server.id] = { pill, btn, soon, ptEl, instPill };
+    cards[server.id] = { pill, btn, soon, ptEl, instPill, playersEl: cardPlayers };
   });
 
   applyPing();
@@ -167,9 +169,11 @@ function applyPing() {
     if (res.online) {
       c.pill.className = 'pill online';
       c.pill.textContent = res.max ? `En línea · ${res.players}/${res.max}` : 'En línea';
+      if (c.playersEl) c.playersEl.textContent = res.max ? `${res.players} de ${res.max} conectados` : 'En línea';
     } else {
       c.pill.className = 'pill offline';
       c.pill.textContent = 'Sin conexión';
+      if (c.playersEl) c.playersEl.textContent = 'Servidor fuera de línea';
     }
   });
 }
@@ -241,12 +245,12 @@ function syncPlayingUi() {
   Object.entries(cards).forEach(([serverId, c]) => {
     if (c.soon) return;
     c.btn.disabled = !!id;
-    c.btn.textContent = serverId === id ? 'Iniciando…' : playLabel(serverId);
+    c.btn.textContent = serverId === id ? (current.phase === 'playing' ? 'En juego' : 'Iniciando…') : playLabel(serverId);
   });
   const server = id && cfg.servers.find((s) => s.id === id);
   if (server) {
     $('dock').hidden = false;
-    $('dock-title').textContent = `Iniciando ${server.name}`;
+    $('dock-title').textContent = current.phase === 'playing' ? `Jugando ${server.name}` : `Iniciando ${server.name}`;
   } else if (!$('progress-text').textContent) {
     $('dock').hidden = true;
   }
@@ -582,6 +586,26 @@ $('btn-skin-copy').addEventListener('click', async () => {
   toast('Comando copiado');
 });
 
+$('btn-open-folder').addEventListener('click', () => window.api.openGameFolder());
+$('btn-repair').addEventListener('click', async () => {
+  const btn = $('btn-repair');
+  if (!btn.dataset.confirm) {
+    btn.dataset.confirm = '1';
+    btn.textContent = 'Pulsa otra vez para confirmar';
+    setTimeout(() => { delete btn.dataset.confirm; btn.textContent = 'Reparar instalación'; }, 4000);
+    return;
+  }
+  delete btn.dataset.confirm;
+  btn.textContent = 'Reparar instalación';
+  const res = await window.api.repairInstall();
+  if (res.ok) {
+    toast('Listo: se reinstalará al pulsar Jugar');
+    refreshInstall();
+  } else {
+    showError($('repair-error'), res.error);
+  }
+});
+
 $('btn-reset-settings').addEventListener('click', async () => {
   const res = await window.api.resetSettings();
   if (res.ok) {
@@ -651,7 +675,7 @@ const TOUR = [
   { title: 'Bienvenido a Dimensional Studio', text: 'Este es el launcher oficial de nuestros eventos de Minecraft. Te explicamos cómo empezar en unos pasos.' },
   { title: 'Inicia sesión con Discord', text: 'Tu cuenta de Discord es tu identidad en el launcher. Solo la usamos para saber quién eres; no guardamos contraseñas.' },
   { title: 'Elige tu nombre de jugador', text: 'Será tu nombre dentro del juego (3 a 16 caracteres: letras, números y guion bajo). Puedes cambiarlo cuando quieras con el botón Cambiar, arriba a la izquierda.' },
-  { title: 'Elige un servidor y pulsa Jugar', text: 'El launcher descarga los mods y archivos por ti y entra directo al servidor. La primera vez puede tardar unos minutos.' },
+  { title: 'Elige un servidor y pulsa Jugar', text: 'El launcher instala Java, los mods y todo lo necesario por ti y entra directo al servidor. La primera vez puede tardar unos minutos.' },
   { title: 'Ajusta tu experiencia', text: 'En Configuración puedes cambiar la memoria RAM, la resolución y tu skin. Desde ahí también puedes volver a ver este tutorial.' }
 ];
 let tourIdx = 0;
