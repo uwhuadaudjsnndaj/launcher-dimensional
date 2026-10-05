@@ -647,3 +647,58 @@ input.switch:checked::before { transform: translateX(18px); }
 .update-bar i { display: block; height: 100%; width: 0; background: #d4141f; transition: width .2s; }
 .update-btn { -webkit-app-region: no-drag; border: 0; border-radius: 8px; padding: 8px 10px; font-weight: 600; font-size: 12px; cursor: pointer; color: #fff; background: linear-gradient(135deg, #d4141f, #8e0d16); }
 .update-btn:hover { filter: brightness(1.15); }
+
+
+/* ---- v1.2: tiempo jugado, errores, avanzado, skin, tutorial ---- */
+.meta .wide { grid-column: 1 / -1; }
+
+.note.warn { color: #fbbf24; }
+
+.foot-actions { display: flex; gap: 10px; }
+
+.res-row { align-items: center; }
+.res-row input { min-width: 0; }
+.res-x { color: var(--faint); font-size: 14px; }
+.field input[type='number']::-webkit-inner-spin-button { opacity: 0.4; }
+
+.skin-row { display: flex; align-items: center; gap: 12px; }
+.skin-field { flex: 1; min-width: 0; }
+.skin-field input { min-width: 0; }
+.skin-preview {
+  width: 44px; height: 44px; flex-shrink: 0;
+  border-radius: 10px; image-rendering: pixelated;
+  border: 1px solid var(--line-strong); background: var(--surface-2);
+}
+
+.crash-box {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 16px; border-radius: 14px;
+  border: 1px solid rgba(255, 107, 125, 0.4);
+  background: rgba(212, 20, 31, 0.1);
+}
+.crash-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.crash-text strong { font-size: 13.5px; }
+.crash-text span { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.crash-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.crash-actions .btn { padding: 8px 12px; font-size: 12.5px; }
+
+.tour {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(4, 4, 6, 0.78); backdrop-filter: blur(4px);
+  animation: fade-up 0.3s ease both;
+}
+.tour-card {
+  width: 440px; padding: 30px 32px 24px;
+  display: flex; flex-direction: column; gap: 12px;
+  border-radius: 18px; border: 1px solid var(--line-strong);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(212, 20, 31, 0.18);
+}
+.tour-card h2 { font-size: 21px; font-weight: 700; }
+.tour-card p { font-size: 14px; line-height: 1.6; color: var(--muted); min-height: 66px; }
+.tour-dots { display: flex; gap: 6px; margin-top: 4px; }
+.tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); transition: all 0.2s; }
+.tour-dots i.on { width: 20px; border-radius: 999px; background: var(--accent); }
+.tour-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.tour-actions .spacer { flex: 1; }
